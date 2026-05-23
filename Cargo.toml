@@ -1,0 +1,18 @@
+[package]
+name = "robot-dog-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "面向四足机器狗的 Rust 大模型控制器与采购/落地方案"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4"
