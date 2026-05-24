@@ -1,13 +1,16 @@
 mod config;
 mod driver;
+mod gateway;
 mod llm;
 mod planner;
+mod service;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, ValueEnum};
 use config::{AppConfig, RunMode};
-use planner::offline_plan;
+use service::generate_plan;
 use std::io::{self, IsTerminal, Read};
+use std::net::SocketAddr;
 
 #[derive(Debug, Clone, ValueEnum)]
 enum OutputFormat {
@@ -36,34 +39,31 @@ struct Cli {
     mode: ModeArg,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
+    #[arg(long)]
+    serve: bool,
+    #[arg(long)]
+    bind: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
+    if cli.serve && cli.prompt.is_some() {
+        return Err(anyhow!("--serve 运行时不要同时传 --prompt"));
+    }
     let mode_override = Some(match cli.mode {
         ModeArg::Auto => RunMode::Auto,
         ModeArg::Online => RunMode::Online,
         ModeArg::Offline => RunMode::Offline,
     });
     let config = AppConfig::from_env(mode_override)?;
+    if cli.serve {
+        let bind = parse_bind(cli.bind)?;
+        return gateway::serve(config, bind).await;
+    }
     let prompt = read_prompt(cli.prompt)?;
-    let use_online = should_use_online(&config);
-
-    let mut plan = if use_online {
-        match llm::request_plan(&config, &prompt).await {
-            Ok(plan) => plan,
-            Err(error) => {
-                eprintln!("在线模式失败，回退到离线模式：{error:#}");
-                offline_plan(&prompt, &config)
-            }
-        }
-    } else {
-        offline_plan(&prompt, &config)
-    };
-
-    plan = planner::normalize_plan(plan, &config)?;
+    let plan = generate_plan(&config, &prompt).await?;
 
     let output = match cli.format {
         OutputFormat::Text => driver::render_output(&plan, false),
@@ -98,10 +98,10 @@ fn read_prompt(prompt: Option<String>) -> Result<String> {
     Ok(text)
 }
 
-fn should_use_online(config: &AppConfig) -> bool {
-    match config.mode {
-        RunMode::Offline => false,
-        RunMode::Online => true,
-        RunMode::Auto => config.can_use_online_model(),
-    }
+fn parse_bind(bind: Option<String>) -> Result<SocketAddr> {
+    let bind = bind
+        .or_else(|| std::env::var("ROBOT_DOG_GATEWAY_BIND").ok())
+        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
+    bind.parse::<SocketAddr>()
+        .with_context(|| format!("无法解析网关地址: {bind}"))
 }

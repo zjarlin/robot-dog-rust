@@ -241,10 +241,17 @@ fn extract_motion(lower_prompt: &str, config: &AppConfig) -> Option<(f32, f32, f
     let mut angular_z = 0.0;
     let mut duration_ms = 1500;
 
-    if lower_prompt.contains("前进") || lower_prompt.contains("forward") {
+    if lower_prompt.contains("前进")
+        || lower_prompt.contains("向前")
+        || lower_prompt.contains("forward")
+        || lower_prompt.contains("走")
+    {
         linear_x = config.max_linear_speed.min(0.15);
     }
-    if lower_prompt.contains("后退") || lower_prompt.contains("back") {
+    if lower_prompt.contains("后退")
+        || lower_prompt.contains("向后")
+        || lower_prompt.contains("back")
+    {
         linear_x = -config.max_linear_speed.min(0.15);
     }
     if lower_prompt.contains("左转") || lower_prompt.contains("left") {
@@ -271,13 +278,37 @@ fn parse_duration_ms(text: &str) -> Option<u32> {
         }
     }
 
-    number.parse::<u32>().ok().map(|value| {
-        if text.contains("秒") || text.contains("sec") {
-            value.saturating_mul(1000)
-        } else {
-            value
-        }
-    })
+    number
+        .parse::<u32>()
+        .ok()
+        .map(|value| {
+            if text.contains("秒") || text.contains("sec") {
+                value.saturating_mul(1000)
+            } else {
+                value
+            }
+        })
+        .or_else(|| parse_chinese_second_duration(text))
+}
+
+fn parse_chinese_second_duration(text: &str) -> Option<u32> {
+    let pairs = [
+        ("半秒", 500),
+        ("一秒", 1_000),
+        ("二秒", 2_000),
+        ("两秒", 2_000),
+        ("三秒", 3_000),
+        ("四秒", 4_000),
+        ("五秒", 5_000),
+        ("六秒", 6_000),
+        ("七秒", 7_000),
+        ("八秒", 8_000),
+        ("九秒", 9_000),
+        ("十秒", 10_000),
+    ];
+    pairs
+        .iter()
+        .find_map(|(pattern, duration_ms)| text.contains(pattern).then_some(*duration_ms))
 }
 
 fn clamp(value: f32, min: f32, max: f32) -> f32 {
@@ -305,11 +336,28 @@ mod tests {
     fn offline_plan_detects_basic_actions() {
         let plan = offline_plan("让机器人站起来然后向前走2秒再停下", &test_config());
         assert!(plan.actions.iter().any(|a| matches!(a, RobotAction::Stand)));
-        assert!(plan
-            .actions
-            .iter()
-            .any(|a| matches!(a, RobotAction::Move { .. })));
+        assert!(plan.actions.iter().any(|action| matches!(
+            action,
+            RobotAction::Move {
+                linear_x,
+                duration_ms,
+                ..
+            } if *linear_x > 0.0 && *duration_ms == 2_000
+        )));
         assert!(plan.actions.iter().any(|a| matches!(a, RobotAction::Stop)));
+    }
+
+    #[test]
+    fn offline_plan_handles_common_chinese_duration_words() {
+        let plan = offline_plan("向前走两秒", &test_config());
+        assert!(plan.actions.iter().any(|action| matches!(
+            action,
+            RobotAction::Move {
+                linear_x,
+                duration_ms,
+                ..
+            } if *linear_x > 0.0 && *duration_ms == 2_000
+        )));
     }
 
     #[test]
